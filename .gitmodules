@@ -4,3 +4,6 @@
 [submodule "dataflux_pytorch/benchmark/standalone_dataloader/maxtext"]
 	path = dataflux_pytorch/benchmark/standalone_dataloader/maxtext
 	url = https://github.com/google/maxtext.git
+[submodule "demo/llama/lit_llama"]
+	path = demo/llama/lit_llama
+	url = https://github.com/Lightning-AI/lit-llama.git

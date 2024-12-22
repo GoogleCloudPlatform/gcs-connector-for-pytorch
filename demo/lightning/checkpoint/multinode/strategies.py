@@ -7,6 +7,9 @@ import gcsfs
 import torch
 import torch.distributed as dist
 from dataflux_core import user_agent
+from dataflux_pytorch.lightning import DatafluxLightningCheckpoint
+from dataflux_pytorch.lightning.gcs_filesystem import (GCSDistributedReader,
+                                                       GCSDistributedWriter)
 from google.cloud import storage
 from lightning.pytorch.strategies import FSDPStrategy
 from lightning.pytorch.strategies.fsdp import _METADATA_FILENAME
@@ -15,10 +18,6 @@ from torch.distributed.checkpoint import _fsspec_filesystem as FF
 from torch.distributed.checkpoint import async_save, load, save
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn import Module
-
-from dataflux_pytorch.lightning import DatafluxLightningCheckpoint
-from dataflux_pytorch.lightning.gcs_filesystem import (GCSDistributedReader,
-                                                       GCSDistributedWriter)
 
 
 def checkpoint_helper(checkpoint):
