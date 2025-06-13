@@ -28,7 +28,7 @@ gcloud auth application-default login
 ```
 
 ### Examples
-Please checkout the `demo` directory for a complete set of examples, which includes a [simple starter Jupyter Notebook (hosted by Google Colab)](demo/simple-walkthrough/Getting%20Started%20with%20Dataflux%20Dataset%20for%20PyTorch%20with%20Google%20Cloud%20Storage.ipynb) and an [end-to-end image segmentation training workload walkthrough](demo/image-segmentation/README.md). Those examples will help you understand how the Connector for PyTorch works and how you can integrate it into your own workload.
+Please checkout the `demo` directory for a complete set of examples, which includes a [simple starter Jupyter Notebook (hosted by Google Colab)](demo/simple-walkthrough/Getting%20Started%20with%20Dataflux%20Dataset%20for%20PyTorch%20with%20Google%20Cloud%20Storage.ipynb) and an [end-to-end image segmentation training workload walkthrough](demo/image_segmentation/README.md). Those examples will help you understand how the Connector for PyTorch works and how you can integrate it into your own workload.
 
 #### Sample Examples
 Before getting started, please make sure you have installed the library and configured authentication following the instructions above.
