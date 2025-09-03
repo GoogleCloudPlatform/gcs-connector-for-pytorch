@@ -51,6 +51,7 @@ class MultipartUploadTestCase(unittest.TestCase):
         mock_client = mock.Mock(spec=Client)
         mock_bucket = mock.Mock()
         mock_request = mock.Mock(request.Request)
+        mock_request.text = "<Error><Code>TestCode</Code><Message>TestMessage</Message><Details>TestDetails</Details></Error>"
         mock_request.status_code = 400
         mock_request.headers = {"etag": 12345}
         mock_client._http.request.return_value = mock_request
@@ -126,6 +127,7 @@ class MultipartUploadTestCase(unittest.TestCase):
     def test_buffer_view_upload_part_failure(self, mock_part):
         mock_client = mock.Mock(spec=Client)
         mock_request = mock.Mock(request.Request)
+        mock_request.text = "<Error><Code>TestCode</Code><Message>TestMessage</Message><Details>TestDetails</Details></Error>"
         mock_request.status_code = 400
         mock_client._http.request.return_value = mock_request
         mock_request.headers = {"etag": 12345}
