@@ -16,21 +16,20 @@
 import concurrent.futures
 
 from google.api_core import exceptions
-from google.cloud.storage import Client
-from google.cloud.storage import Blob
-from google.cloud.storage.blob import _get_host_name
-from google.cloud.storage.blob import _quote
+from google.cloud.storage import Blob, Client
+from google.cloud.storage.blob import _get_host_name, _quote
 from google.cloud.storage.constants import _DEFAULT_TIMEOUT
 from google.cloud.storage.retry import DEFAULT_RETRY
-from google.cloud.storage.transfer_manager import _headers_from_metadata
-from google.cloud.storage.transfer_manager import _get_pool_class_and_requirements
+from google.cloud.storage.transfer_manager import (
+    _get_pool_class_and_requirements, _headers_from_metadata)
 
 try:
     # Forwards compatibility with google-cloud-storage v3.x
     from google.cloud.storage._media import _helpers
-    from google.cloud.storage._media.requests.upload import XMLMPUContainer
-    from google.cloud.storage._media.requests.upload import XMLMPUPart
+    from google.cloud.storage._media.requests.upload import (XMLMPUContainer,
+                                                             XMLMPUPart)
     from google.cloud.storage.exceptions import DataCorruption
+
     # This method is no longer needed in x3.x
     _api_core_retry_to_resumable_media_retry = lambda x: x
 except ImportError:
@@ -42,7 +41,6 @@ except ImportError:
     from google.cloud.storage._helpers import _api_core_retry_to_resumable_media_retry
 
 import google_crc32c
-
 
 TM_DEFAULT_CHUNK_SIZE = 32 * 1024 * 1024
 DEFAULT_MAX_WORKERS = 8
@@ -199,7 +197,7 @@ def upload_chunks_concurrently_from_bytesio(
                     end=end,
                     part_number=part_number,
                     checksum=checksum,
-                    headers=headers,
+                    headers=headers.copy(),
                     retry=retry,
                 ))
 
