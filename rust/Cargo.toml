@@ -8,3 +8,7 @@ google-cloud-storage = "1.6"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 futures = "0.3"
+async-channel = "2.5.0"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+google-cloud-wkt = "1.2.0"

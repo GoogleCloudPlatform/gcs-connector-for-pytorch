@@ -18,30 +18,88 @@ use google_cloud_storage::model::{Object, compose_object_request::SourceObject};
 
 use futures::stream::{self, StreamExt};
 
-pub async fn sample(client: &StorageControl, storage: &Storage, bucket_id: &str, objects: Vec<String>) -> anyhow::Result<()> {
-    // GCS allows composing up to 32 objects at a time
+#[derive(Clone, Debug)]
+struct ComposedBatch {
+    name: String,
+    start_idx: usize, // inclusive
+    end_idx: usize,   // exclusive
+}
+
+pub async fn sample(client: &StorageControl, storage: &Storage, bucket_id: &str, objects: Vec<String>, depth: u32) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all("restored").await?;
     const MAX_COMPOSE_BATCH: usize = 32;
-    // Limit concurrency to avoid hitting rate limits or overwhelming the client
     const MAX_CONCURRENCY: usize = 10;
 
-    let chunks: Vec<_> = objects.chunks(MAX_COMPOSE_BATCH).enumerate().collect();
-    
-    let bodies = stream::iter(chunks)
-        .map(|(i, chunk)| {
+    if depth == 0 || objects.is_empty() {
+        return Ok(());
+    }
+
+    // 1. Fetch Source Sizes (Concurrent & Ordered)
+    println!("Fetching base component sizes...");
+    let size_futures = objects.iter().map(|name| {
+        let client = client.clone();
+        let bucket_id = bucket_id.to_string();
+        let name = name.clone();
+        async move {
+            client
+                .get_object()
+                .set_bucket(format!("projects/_/buckets/{bucket_id}"))
+                .set_object(&name)
+                .send()
+                .await
+                .map(|o| o.size)
+                .map_err(anyhow::Error::from)
+        }
+    });
+
+    let base_sizes: Vec<i64> = stream::iter(size_futures)
+        .buffered(MAX_CONCURRENCY)
+        .collect::<Vec<anyhow::Result<i64>>>()
+        .await
+        .into_iter()
+        .collect::<anyhow::Result<Vec<i64>>>()
+        .map_err(|e| {
+            eprintln!("Failed to fetch base sizes: {:?}", e);
+            e
+        })?;
+
+    println!("Fetched {} base sizes.", base_sizes.len());
+
+    // 2. Hierarchical Compose
+    let mut current_level_batches: Vec<ComposedBatch> = objects.into_iter().enumerate().map(|(i, name)| {
+        ComposedBatch {
+            name,
+            start_idx: i,
+            end_idx: i + 1,
+        }
+    }).collect();
+
+    let original_objects: Vec<String> = current_level_batches.iter().map(|b| b.name.clone()).collect();
+    let mut generated_objects_to_delete: Vec<String> = Vec::new();
+
+    for current_depth in 1..=depth {
+        if current_level_batches.len() == 1 {
+            println!("Reached single object at depth {}, stopping composition.", current_depth - 1);
+            break;
+        }
+
+        println!("--- Starting Composition Depth {} ---", current_depth);
+        let chunks: Vec<_> = current_level_batches.chunks(MAX_COMPOSE_BATCH).enumerate().collect();
+
+        let compose_futures = chunks.iter().map(|(i, chunk)| {
             let client = client.clone();
-            let storage = storage.clone();
             let bucket_id = bucket_id.to_string();
             let chunk = chunk.to_vec();
-            async move {
-                let destination_name = format!("composed_batch_{}", i);
-                println!("Processing chunk {}: Composing into {}", i, destination_name);
+            let destination_name = format!("composed_d{}_b{}", current_depth, i);
+            let start_idx = chunk.first().unwrap().start_idx;
+            let end_idx = chunk.last().unwrap().end_idx;
 
+            async move {
                 let source_objects: Vec<SourceObject> = chunk
                     .iter()
-                    .map(|name| SourceObject::new().set_name(name))
+                    .map(|b| SourceObject::new().set_name(&b.name))
                     .collect();
 
-                // 1. Compose
                 let compose_result = client
                     .compose_object()
                     .set_destination(
@@ -53,144 +111,155 @@ pub async fn sample(client: &StorageControl, storage: &Storage, bucket_id: &str,
                     .send()
                     .await;
 
-                let object = match compose_result {
-                    Ok(o) => o,
-                    Err(e) => {
-                        eprintln!("Failed to compose chunk {}: {:?}", i, e);
-                        return Err(anyhow::Error::from(e));
-                    }
-                };
-
-                println!("Chunk {}: Composed. Size: {}", i, object.size);
-
-                // 2. Fetch Source Sizes (Concurrent & Ordered)
-                println!("Chunk {}: Fetching component sizes...", i);
-                let size_futures = chunk.iter().map(|name| {
-                    let client = client.clone();
-                    let bucket_id = bucket_id.clone();
-                    // clone name for async block
-                    let name = name.clone();
-                    async move {
-                         client
-                            .get_object()
-                            .set_bucket(format!("projects/_/buckets/{bucket_id}"))
-                            .set_object(&name)
-                            .send()
-                            .await
-                            .map(|o| o.size)
-                            .map_err(anyhow::Error::from)
-                    }
-                });
-                
-                let sizes: Vec<i64> = stream::iter(size_futures)
-                    .buffered(MAX_CONCURRENCY)
-                    .collect::<Vec<anyhow::Result<i64>>>()
-                    .await
-                    .into_iter()
-                    .collect::<anyhow::Result<Vec<i64>>>()
-                    .map_err(|e| {
-                         eprintln!("Failed to fetch sizes for chunk {}: {:?}", i, e);
-                         e
-                    })?;
-                
-                println!("Chunk {}: Sizes fetched: {:?}", i, sizes);
-
-                // 3. Download & Demux
-                println!("Chunk {}: Downloading & Decomposing {}", i, destination_name);
-                let read_result = storage
-                    .read_object(&format!("projects/_/buckets/{bucket_id}"), &destination_name)
-                    .send()
-                    .await;
-                
-                match read_result {
-                    Ok(mut reader) => {
-                        let mut current_file_idx = 0;
-                        let mut current_file_written = 0;
-                        let mut current_file: Option<tokio::fs::File> = None;
-
-                        while let Some(chunk_res) = reader.next().await {
-                             let mut data_chunk = match chunk_res {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    eprintln!("Failed to read chunk from {}: {:?}", destination_name, e);
-                                    return Err(anyhow::Error::from(e));
-                                }
-                            };
-
-                            while !data_chunk.is_empty() {
-                                if current_file_idx >= sizes.len() {
-                                    eprintln!("Chunk {}: Received more data than expected based on component sizes", i);
-                                    break;
-                                }
-
-                                let expected_size = sizes[current_file_idx];
-                                let remaining_for_file = expected_size - current_file_written;
-
-                                // Open file if not open
-                                if current_file.is_none() {
-                                    let filename = &chunk[current_file_idx]; // chunk names are in 'chunk' variable
-                                    let path = format!("restored/{}", filename);
-                                    let file = tokio::fs::File::create(&path).await.map_err(anyhow::Error::from)?;
-                                    current_file = Some(file);
-                                }
-
-                                let write_len = std::cmp::min(data_chunk.len() as i64, remaining_for_file) as usize;
-                                let write_slice = data_chunk.split_to(write_len);
-
-                                if let Some(file) = current_file.as_mut() {
-                                    use tokio::io::AsyncWriteExt;
-                                    file.write_all(&write_slice).await.map_err(anyhow::Error::from)?;
-                                }
-
-                                current_file_written += write_len as i64;
-
-                                if current_file_written == expected_size {
-                                    // Finished this file
-                                    current_file = None;
-                                    current_file_idx += 1;
-                                    current_file_written = 0;
-                                }
-                            }
-                        }
+                match compose_result {
+                    Ok(object) => {
+                        println!("Composed {} with size: {}", destination_name, object.size);
+                        Ok(ComposedBatch {
+                            name: destination_name,
+                            start_idx,
+                            end_idx,
+                        })
                     }
                     Err(e) => {
-                        eprintln!("Failed to start download for {}: {:?}", destination_name, e);
-                        return Err(anyhow::Error::from(e));
-                    }
-                }
-                println!("Chunk {}: Decomposed into {} files", i, sizes.len());
-
-                // 3. Delete
-                println!("Chunk {}: Deleting {}", i, destination_name);
-                let delete_result = client
-                    .delete_object()
-                    .set_bucket(format!("projects/_/buckets/{bucket_id}"))
-                    .set_object(&destination_name)
-                    .send()
-                    .await;
-
-                match delete_result {
-                    Ok(_) => {
-                         println!("Chunk {}: Deleted", i);
-                         Ok(())
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to delete {}: {:?}", destination_name, e);
+                        eprintln!("Failed to compose {}: {:?}", destination_name, e);
                         Err(anyhow::Error::from(e))
                     }
                 }
             }
-        })
-        .buffer_unordered(MAX_CONCURRENCY);
+        });
 
-    // Drive the stream to completion and check for errors
-    let results: Vec<anyhow::Result<()>> = bodies.collect().await;
-    
-    // Verify all succeeded
-    for res in results {
+        let results: Vec<anyhow::Result<ComposedBatch>> = stream::iter(compose_futures)
+            .buffer_unordered(MAX_CONCURRENCY)
+            .collect().await;
+
+        let mut level_outputs = Vec::new();
+        for res in results {
+            let batch = res?;
+            generated_objects_to_delete.push(batch.name.clone());
+            level_outputs.push(batch);
+        }
+
+        // Sort to maintain original object ordering
+        level_outputs.sort_by_key(|b| b.start_idx);
+        current_level_batches = level_outputs;
+    }
+
+    // 3. Download & Demux
+    println!("--- Downloading and Decomposing ---");
+    let download_futures = current_level_batches.into_iter().map(|batch| {
+         let storage = storage.clone();
+         let bucket_id = bucket_id.to_string();
+         let original_objects = original_objects.clone();
+         let base_sizes = base_sizes.clone();
+
+         async move {
+             println!("Downloading & Decomposing {}", batch.name);
+             let read_result = storage
+                 .read_object(&format!("projects/_/buckets/{bucket_id}"), &batch.name)
+                 .send()
+                 .await;
+                 
+             match read_result {
+                 Ok(mut reader) => {
+                     let mut current_file_idx = batch.start_idx;
+                     let mut current_file_written = 0;
+                     let mut current_file: Option<tokio::fs::File> = None;
+
+                     while let Some(chunk_res) = reader.next().await {
+                         let mut data_chunk = match chunk_res {
+                             Ok(b) => b,
+                             Err(e) => {
+                                 eprintln!("Failed to read chunk from {}: {:?}", batch.name, e);
+                                 return Err(anyhow::Error::from(e));
+                             }
+                         };
+
+                         while !data_chunk.is_empty() {
+                             if current_file_idx >= batch.end_idx {
+                                 eprintln!("Received more data than expected for batch {}", batch.name);
+                                 break;
+                             }
+
+                             let expected_size = base_sizes[current_file_idx];
+                             let remaining_for_file = expected_size - current_file_written;
+
+                             if current_file.is_none() {
+                                 let filename = &original_objects[current_file_idx];
+                                 let path = format!("restored/{}", filename);
+                                 let file = tokio::fs::File::create(&path).await.map_err(anyhow::Error::from)?;
+                                 current_file = Some(file);
+                             }
+
+                             let write_len = std::cmp::min(data_chunk.len() as i64, remaining_for_file) as usize;
+                             let write_slice = data_chunk.split_to(write_len);
+
+                             if let Some(file) = current_file.as_mut() {
+                                 use tokio::io::AsyncWriteExt;
+                                 file.write_all(&write_slice).await.map_err(anyhow::Error::from)?;
+                             }
+
+                             current_file_written += write_len as i64;
+
+                             if current_file_written == expected_size {
+                                 current_file = None;
+                                 current_file_idx += 1;
+                                 current_file_written = 0;
+                             }
+                         }
+                     }
+                     println!("Decomposed {} into {} files.", batch.name, batch.end_idx - batch.start_idx);
+                     Ok(())
+                 }
+                 Err(e) => {
+                     eprintln!("Failed to start download for {}: {:?}", batch.name, e);
+                     Err(anyhow::Error::from(e))
+                 }
+             }
+         }
+    });
+
+    let download_results: Vec<anyhow::Result<()>> = stream::iter(download_futures)
+        .buffer_unordered(MAX_CONCURRENCY)
+        .collect().await;
+
+    for res in download_results {
         res?;
     }
-    
+
+    // 4. Delete
+    println!("--- Deleting Generated Objects ---");
+    let delete_futures = generated_objects_to_delete.into_iter().map(|name| {
+        let client = client.clone();
+        let bucket_id = bucket_id.to_string();
+        async move {
+            println!("Deleting {}", name);
+            let delete_result = client
+                .delete_object()
+                .set_bucket(format!("projects/_/buckets/{bucket_id}"))
+                .set_object(&name)
+                .send()
+                .await;
+            
+            match delete_result {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    eprintln!("Failed to delete {}: {:?}", name, e);
+                    // Just log the error, don't fail the whole process if one deletion fails?
+                    // Usually we want to bubble it up.
+                    Err(anyhow::Error::from(e))
+                }
+            }
+        }
+    });
+
+    let delete_results: Vec<anyhow::Result<()>> = stream::iter(delete_futures)
+        .buffer_unordered(MAX_CONCURRENCY)
+        .collect().await;
+
+    for res in delete_results {
+        res?;
+    }
+
     Ok(())
 }
 // [END storage_compose_file]

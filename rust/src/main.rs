@@ -1,4 +1,6 @@
 mod sample;
+mod range_splitter;
+pub mod fast_list;
 
 use google_cloud_storage::client::StorageControl;
 
@@ -8,19 +10,44 @@ async fn main() -> anyhow::Result<()> {
     let client = StorageControl::builder().build().await?;
     let storage = google_cloud_storage::client::Storage::builder().build().await?;
 
-    // Run sample
-    let bucket_name = "jd-compose-rust";
-    println!("Running sample against bucket: {}", bucket_name);
+    let args: Vec<String> = std::env::args().collect();
+    let command = args.get(1).map(|s| s.as_str()).unwrap_or("sample");
 
-    // List objects to compose
-    // Ideally we would list them from the bucket, but for this test we know they are obj_0..obj_99
-    let mut objects: Vec<String> = (0..100).map(|i| format!("obj_{}", i)).collect();
-    // Sort to ensure deterministic order if needed, though 0..100 is sorted.
-    objects.sort();
+    if command == "fast_list" {
+        let max_parallelism = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(10);
+        println!("Running Fast List against bucket: tess-listing with max_parallelism: {}", max_parallelism);
+        let start_time = std::time::Instant::now();
+        
+        let config = fast_list::FastListConfig {
+            bucket: "tess-listing".to_string(),
+            prefix: "".to_string(),
+            max_parallelism,
+            skip_compose: false,
+        };
 
-    match sample::sample(&client, &storage, bucket_name, objects).await {
-        Ok(_) => println!("Sample finished successfully."),
-        Err(e) => eprintln!("Sample failed: {:?}", e),
+        match fast_list::fast_list(client, config).await {
+            Ok(results) => {
+                let duration = start_time.elapsed();
+                println!("Fast List finished successfully.");
+                println!("Discovered {} objects in {:?}", results.len(), duration);
+            }
+            Err(e) => eprintln!("Fast List failed: {:?}", e),
+        }
+    } else {
+        // Run sample
+        let bucket_name = "jd-compose-rust";
+        println!("Running compose sample against bucket: {}", bucket_name);
+
+        let depth = args.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(2);
+        println!("Using depth: {}", depth);
+
+        let mut objects: Vec<String> = (0..100).map(|i| format!("obj_{}", i)).collect();
+        objects.sort();
+
+        match sample::sample(&client, &storage, bucket_name, objects, depth).await {
+            Ok(_) => println!("Sample finished successfully."),
+            Err(e) => eprintln!("Sample failed: {:?}", e),
+        }
     }
 
     Ok(())
