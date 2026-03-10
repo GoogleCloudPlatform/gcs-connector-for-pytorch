@@ -196,19 +196,26 @@ async fn process_range(
 
         // --- Work Stealing Check ---
         // If there are idle workers AND the queue is empty, we must split our remaining work.
-        if work_rx.is_empty() && idle_workers.load(Ordering::SeqCst) > 0 {
-            let num_stealers = 1; // Basic stealing: give away half. (Could scale with idle count)
+        let idles = idle_workers.load(Ordering::SeqCst);
+        if work_rx.is_empty() && idles > 0 {
+            let num_stealers = std::cmp::min(idles, 50); // Scale with idle count, but cap to prevent excessive tiny pieces
             let mut split_points = splitter.split_range(&start_range, &end_range, num_stealers);
             
             if !split_points.is_empty() {
-                let steal_range_start = split_points.remove(0);
+                let keep_end = split_points[0].clone();
+                let mut current_start = split_points.remove(0);
                 
-                // Give the upper half to someone else
-                let steal_range = (steal_range_start.clone(), end_range.clone());
-                let _ = work_tx.send(steal_range).await;
+                // Distribute the upper fractions to the idle workers
+                for next_split in split_points {
+                    let _ = work_tx.send((current_start.clone(), next_split.clone())).await;
+                    current_start = next_split;
+                }
                 
-                // Keep the lower half for ourselves
-                end_range = steal_range_start;
+                // Put the very last segment onto the queue
+                let _ = work_tx.send((current_start, end_range.clone())).await;
+                
+                // Keep the lowest fractional segment for ourselves to continue pulling
+                end_range = keep_end;
             }
         }
     }
