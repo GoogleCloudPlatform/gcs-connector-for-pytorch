@@ -25,7 +25,7 @@ struct ComposedBatch {
     end_idx: usize,   // exclusive
 }
 
-pub async fn sample(client: &StorageControl, storage: &Storage, bucket_id: &str, objects: Vec<String>, depth: u32) -> anyhow::Result<()> {
+pub async fn download(client: &StorageControl, storage: &Storage, bucket_id: &str, objects: Vec<String>, depth: u32) -> anyhow::Result<()> {
     tokio::fs::create_dir_all("restored").await?;
     const MAX_COMPOSE_BATCH: usize = 32;
     const MAX_CONCURRENCY: usize = 10;

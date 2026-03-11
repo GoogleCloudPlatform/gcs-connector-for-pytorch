@@ -1,4 +1,4 @@
-mod sample;
+mod download;
 mod range_splitter;
 pub mod fast_list;
 
@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
     let storage = google_cloud_storage::client::Storage::builder().build().await?;
 
     let args: Vec<String> = std::env::args().collect();
-    let command = args.get(1).map(|s| s.as_str()).unwrap_or("sample");
+    let command = args.get(1).map(|s| s.as_str()).unwrap_or("download");
 
     if command == "fast_list" {
         let max_parallelism = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(10);
@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => eprintln!("Fast List failed: {:?}", e),
         }
     } else {
-        // Run sample
+        // Run download
         let bucket_name = "jd-compose-rust";
         println!("Running compose sample against bucket: {}", bucket_name);
 
@@ -44,9 +44,9 @@ async fn main() -> anyhow::Result<()> {
         let mut objects: Vec<String> = (0..100).map(|i| format!("obj_{}", i)).collect();
         objects.sort();
 
-        match sample::sample(&client, &storage, bucket_name, objects, depth).await {
-            Ok(_) => println!("Sample finished successfully."),
-            Err(e) => eprintln!("Sample failed: {:?}", e),
+        match download::download(&client, &storage, bucket_name, objects, depth).await {
+            Ok(_) => println!("Download finished successfully."),
+            Err(e) => eprintln!("Download failed: {:?}", e),
         }
     }
 
