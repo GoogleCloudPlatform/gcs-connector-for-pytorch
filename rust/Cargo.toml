@@ -1,7 +1,11 @@
 [package]
-name = "rust-gcs-sample"
+name = "dataflux-rust"
 version = "0.1.0"
 edition = "2021"
+
+[lib]
+name = "dataflux_rust"
+crate-type = ["cdylib"]
 
 [dependencies]
 google-cloud-storage = "1.6"
@@ -12,3 +16,4 @@ async-channel = "2.5.0"
 num-bigint = "0.4.6"
 num-traits = "0.2.19"
 google-cloud-wkt = "1.2.0"
+pyo3 = { version = "0.28.2", features = ["extension-module", "anyhow"] }
