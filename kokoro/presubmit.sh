@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,8 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-#!/bin/bash
 
 # Fail on any error.
 set -e
@@ -45,13 +44,13 @@ function install_requirements() {
     sudo apt-get -y install python3-pip
 
     echo Installing requirements.
-    pip install -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
     echo Installing required dependencies.
-    pip install .
+    pip install --no-cache-dir .
 
     echo Installing checkpointing requirements
-    pip install -r ./dataflux_pytorch/benchmark/requirements.txt
+    pip install --no-cache-dir -r ./dataflux_pytorch/benchmark/requirements.txt
 }
 
 function run_unit_tests() {
