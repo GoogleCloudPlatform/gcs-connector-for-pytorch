@@ -1,3 +1,4 @@
+#!/bin/bash
 # Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-
 # Fail on any error.
 set -e
 
@@ -21,11 +20,17 @@ set -e
 cd "${KOKORO_ARTIFACTS_DIR}/github/dataflux-pytorch"
 
 function setup_virtual_envs() {
-    sudo apt-get -y update
-
     echo Setting up Python virtual environment.
-    sudo apt install -y python3.8-venv
-    python3 -m venv venv
+    if ! python3 -m venv venv 2>/dev/null; then
+        rm -rf venv
+        if python3 -m virtualenv --version >/dev/null 2>&1; then
+            python3 -m virtualenv venv
+        else
+            sudo apt-get -y update
+            sudo apt install -y python3.8-venv
+            python3 -m venv venv
+        fi
+    fi
     source venv/bin/activate
 }
 
@@ -41,20 +46,23 @@ function run_git_commands() {
 }
 
 function install_requirements() {
-    echo Installing python3-pip.
-    sudo apt-get -y install python3-pip
+    if ! command -v pip >/dev/null 2>&1; then
+        echo Installing python3-pip.
+        sudo apt-get -y update
+        sudo apt-get -y install python3-pip
+    fi
 
     echo Installing requirements.
-    pip install -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
     echo Installing parquet demo requirements.
-    pip install -r ./demo/lightning/text_based/distributed/requirements.txt
+    pip install --no-cache-dir -r ./demo/lightning/text_based/distributed/requirements.txt
 
     echo Installing image training demo requirements.
-    pip install -r ./demo/lightning/image_segmentation/requirements.txt
+    pip install --no-cache-dir -r ./demo/lightning/image_segmentation/requirements.txt
 
     echo Installing required dependencies.
-    pip install .
+    pip install --no-cache-dir .
 }
 
 function run_benchmarks(){
@@ -64,7 +72,7 @@ function run_benchmarks(){
     echo Running image-segmentation benchmark.
     python3 -u ./demo/lightning/image_segmentation/train.py --local --benchmark --gcp_project=dataflux-project --gcs_bucket=dataflux-demo-public --images_prefix=image-segmentation-dataset/images --labels_prefix=image-segmentation-dataset/labels --num_nodes=1 --num_devices=5 --epochs=2;
     echo Installing checkpointing demo requirements.
-    pip install -r ./dataflux_pytorch/benchmark/requirements.txt
+    pip install --no-cache-dir -r ./dataflux_pytorch/benchmark/requirements.txt
     echo Running single node checkpointing benchmark.
     python3 -u ./dataflux_pytorch/benchmark/checkpointing/singlenode/train.py --project=dataflux-project --ckpt-dir-path=gs://df-ckpt-presubmit/ --layers=1000 --steps=5
     echo Running single node async checkpointing benchmark.
